@@ -100,8 +100,8 @@ const constraintsSchema = {
 
 export const tools = [
   {
-    name: 'mastergo_status',
-    description: 'Call this first for any MasterGo work. Read-only and fast. When connected it already returns the document, page, capabilities, and a bounded selection snapshot, so do not chain other read tools just to confirm the connection. Use actionRequired when disconnected.',
+    name: 'quickdesign_status',
+    description: 'Call this first for QuickDesign work in MasterGo or Figma. Read-only and fast. Returns host, document, page, capabilities, supportedMethods when advertised, and a bounded selection snapshot. Check supportedMethods before invoking a tool; a listed tool may not be supported by the connected host. Do not chain reads just to confirm connection. Use actionRequired when disconnected.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -116,7 +116,7 @@ export const tools = [
     annotations: { readOnlyHint: true, destructiveHint: false },
   },
   {
-    name: 'mastergo_get_context',
+    name: 'quickdesign_get_context',
     description: 'Re-read the active document summary plus a bounded selection snapshot in one call, after the user changes the selection or page. Read-only. Never returns the node tree.',
     inputSchema: {
       type: 'object',
@@ -128,8 +128,8 @@ export const tools = [
     annotations: { readOnlyHint: true, destructiveHint: false },
   },
   {
-    name: 'mastergo_get_node_tree',
-    description: 'Read a bounded MasterGo node subtree. Requires an explicit nodeId from a previous read or a user-named layer; never fetch the whole page to look around. Read-only, limited by maxDepth/maxNodes.',
+    name: 'quickdesign_get_node_tree',
+    description: 'Read a bounded node subtree in the connected host (MasterGo or Figma). Requires an explicit nodeId from a previous read or a user-named layer; never fetch the whole page to look around. Read-only, limited by maxDepth/maxNodes.',
     inputSchema: {
       type: 'object',
       required: ['nodeId'],
@@ -143,8 +143,8 @@ export const tools = [
     annotations: { readOnlyHint: true, destructiveHint: false },
   },
   {
-    name: 'mastergo_insert_svg',
-    description: 'Insert a safe SVG as editable MasterGo vector nodes in the active page. Creates one undo boundary and returns the new node ID.',
+    name: 'quickdesign_insert_svg',
+    description: 'Insert a safe SVG as editable vector nodes in the connected host (MasterGo or Figma) active page. Creates one undo boundary and returns the new node ID.',
     inputSchema: {
       type: 'object',
       required: ['name', 'svg'],
@@ -159,8 +159,8 @@ export const tools = [
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
-    name: 'mastergo_render_html',
-    description: 'Render HTML and CSS into editable MasterGo layers using QuickDesign existing HTML-to-design pipeline. Scripts are rejected. Returns created node IDs and warnings.',
+    name: 'quickdesign_render_html',
+    description: 'Render HTML and CSS into editable layers in the connected host (MasterGo or Figma) using QuickDesign existing HTML-to-design pipeline. Scripts are rejected. Returns created node IDs and warnings.',
     inputSchema: {
       type: 'object',
       required: ['html'],
@@ -173,8 +173,8 @@ export const tools = [
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
-    name: 'mastergo_create_design',
-    description: 'Create an editable MasterGo design from a bounded declarative Design Spec containing frames, text, rectangles, ellipses, and SVG. No executable code is accepted.',
+    name: 'quickdesign_create_design',
+    description: 'Create an editable design in the connected host (MasterGo or Figma) from a bounded declarative Design Spec containing frames, text, rectangles, ellipses, and SVG. No executable code is accepted.',
     inputSchema: {
       type: 'object',
       required: ['spec'],
@@ -184,8 +184,8 @@ export const tools = [
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
-    name: 'mastergo_update_text',
-    description: 'Replace text in one existing MasterGo text node. Pass expectedSignature from a recent read to prevent overwriting concurrent user changes.',
+    name: 'quickdesign_update_text',
+    description: 'Replace text in one existing text node in the connected host (MasterGo or Figma). Pass expectedSignature from a recent read to prevent overwriting concurrent user changes.',
     inputSchema: {
       type: 'object',
       required: ['nodeId', 'text', 'expectedSignature'],
@@ -199,8 +199,8 @@ export const tools = [
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
-    name: 'mastergo_update_nodes',
-    description: 'Apply bounded visual/layout patches to existing MasterGo nodes. Only whitelisted properties are accepted; expectedSignature prevents stale writes. Signature includes parentId plus a fixed-size ordered child digest, so a reparent or child-structure change also invalidates a stale patch. Setters that the host rejects or node types do not support surface as per-node warnings.',
+    name: 'quickdesign_update_nodes',
+    description: 'Apply bounded visual/layout patches to existing nodes in the connected host (MasterGo or Figma). Only whitelisted properties are accepted; expectedSignature prevents stale writes. Signature includes parentId plus a fixed-size ordered child digest, so a reparent or child-structure change also invalidates a stale patch. The accepted subset depends on the host — Figma currently takes name, x, y, width, height, opacity and isVisible, and rejects anything else with UNSUPPORTED_PROPERTY rather than applying it partially. Setters that the host rejects or node types do not support surface as per-node warnings.',
     inputSchema: {
       type: 'object',
       required: ['updates'],
@@ -243,8 +243,8 @@ export const tools = [
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
-    name: 'mastergo_node_op',
-    description: 'General node-operation dispatcher exposing MasterGo structural primitives so you can compose manipulations yourself. Set action to one of: delete (remove nodeIds; captures identity before removal), move (reparent nodeId into parentId and/or reorder to index; preserveAbsolute defaults true), reorder (nodeId to front|back|numeric index within its parent; anything else is rejected), duplicate (clone nodeIds; optional name/dx/dy offset), group (mg.group of nodeIds), ungroup (hoist a GROUP/FRAME wrapper’s children back into its parent then remove the wrapper — MasterGo has no native ungroup; pass nodeIds or groupId; failed steps roll children back into the wrapper), create_shape (shape=rectangle|ellipse|line|polygon|star|frame with x/y/width/height/fills/parentId), boolean (booleanOp=union|subtract|intersect|exclude over nodeIds). To flatten redundant empty DIV/SPAN wrapper shells, compose ungroup (or move leaves up then delete the wrapper) instead of a dedicated tool. Every action creates one MasterGo undo boundary (Cmd+Z). Destructive actions are stale-write guarded and there is no bypass: move/reorder require expectedSignature for nodeId, and delete/ungroup/group/boolean require an expectedSignatures:[{nodeId,signature}] entry for every target. Signatures include parentId and a fixed-size ordered child digest, so structural edits (reparenting, child reorder/add/remove) invalidate stale writes.',
+    name: 'quickdesign_node_op',
+    description: 'General node-operation dispatcher exposing the connected host’s structural primitives (MasterGo or Figma) so you can compose manipulations yourself. Set action to one of: delete (remove nodeIds; captures identity before removal), move (reparent nodeId into parentId and/or reorder to index; preserveAbsolute defaults true), reorder (nodeId to front|back|numeric index within its parent; anything else is rejected), duplicate (clone nodeIds; optional name/dx/dy offset), group (native group of nodeIds), ungroup (hoist a GROUP/FRAME wrapper’s children back into its parent then remove the wrapper; pass nodeIds or groupId), create_shape (shape=rectangle|ellipse|line|polygon|star|frame with x/y/width/height/fills/parentId), boolean (booleanOp=union|subtract|intersect|exclude over nodeIds). To flatten redundant empty DIV/SPAN wrapper shells, compose ungroup (or move leaves up then delete the wrapper) instead of a dedicated tool. Host differences: MasterGo has no native ungroup — the plugin moves the children and removes the wrapper, and a failed step rolls the already-hoisted children back; Figma uses native group/ungroup/boolean, rejects group or boolean whose targets are in different parents, and skips a wrapper that is neither GROUP nor FRAME with a warning instead of half-dissolving it. Every action creates one undo boundary for the host (Cmd+Z). Destructive actions are stale-write guarded and there is no bypass: move/reorder require expectedSignature for nodeId, and delete/ungroup/group/boolean require an expectedSignatures:[{nodeId,signature}] entry for every target. Signatures include parentId and a fixed-size ordered child digest, so structural edits (reparenting, child reorder/add/remove) invalidate stale writes.',
     inputSchema: {
       type: 'object', required: ['action'],
       properties: {
@@ -278,8 +278,8 @@ export const tools = [
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
   {
-    name: 'mastergo_zoom_to_nodes',
-    description: 'Select and zoom the MasterGo viewport to one or more node IDs. Changes selection/viewport only; does not change node content.',
+    name: 'quickdesign_zoom_to_nodes',
+    description: 'Select and zoom the connected host viewport (MasterGo or Figma) to one or more node IDs. Changes selection/viewport only; does not change node content.',
     inputSchema: {
       type: 'object', required: ['nodeIds'],
       properties: { nodeIds: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' } } },
@@ -288,22 +288,46 @@ export const tools = [
     annotations: { readOnlyHint: false, destructiveHint: false },
   },
   {
-    name: 'mastergo_undo',
-    description: 'Trigger one MasterGo undo operation. This changes the active document and may undo the user most recent action if another action occurred after the agent write.',
+    name: 'quickdesign_undo',
+    description: 'Trigger one native undo in the connected host (MasterGo or Figma). The broker refuses it before dispatch with UNDO_CONFLICT: a global undo also reverts other agents’ or the user’s newer work, and the user’s own Cmd+Z is the intended recovery. Repair with a scoped node operation instead; this tool only executes for clients that talk to the plugin bridge directly.',
     inputSchema: emptyObjectSchema,
     annotations: { readOnlyHint: false, destructiveHint: true },
   },
 ]
 
 export const toolMethods = {
-  mastergo_get_context: 'session.context',
-  mastergo_get_node_tree: 'nodes.tree',
-  mastergo_insert_svg: 'design.insertSvg',
-  mastergo_render_html: 'design.renderHtml',
-  mastergo_create_design: 'design.create',
-  mastergo_update_text: 'nodes.updateText',
-  mastergo_update_nodes: 'nodes.update',
-  mastergo_node_op: 'nodes.op',
-  mastergo_zoom_to_nodes: 'viewport.zoomTo',
-  mastergo_undo: 'history.undo',
+  quickdesign_get_context: 'session.context',
+  quickdesign_get_node_tree: 'nodes.tree',
+  quickdesign_insert_svg: 'design.insertSvg',
+  quickdesign_render_html: 'design.renderHtml',
+  quickdesign_create_design: 'design.create',
+  quickdesign_update_text: 'nodes.updateText',
+  quickdesign_update_nodes: 'nodes.update',
+  quickdesign_node_op: 'nodes.op',
+  quickdesign_zoom_to_nodes: 'viewport.zoomTo',
+  quickdesign_undo: 'history.undo',
 }
+
+// quickdesign_* 是正名；mastergo_* 是同一批工具的历史名。已分发的客户端配置、安装目录与
+// 旧提示词仍按历史名调用，所以两种写法都接受，但只有中性名带完整说明与参数结构。
+export const NEUTRAL_TOOL_PREFIX = 'quickdesign_'
+export const LEGACY_TOOL_PREFIX = 'mastergo_'
+
+export const legacyToolName = name =>
+  typeof name === 'string' && name.startsWith(NEUTRAL_TOOL_PREFIX)
+    ? `${LEGACY_TOOL_PREFIX}${name.slice(NEUTRAL_TOOL_PREFIX.length)}`
+    : null
+
+// 未知名称原样返回，交给调用方按缺失处理，避免在这里替服务端编造工具表。
+export const resolveToolName = name =>
+  typeof name === 'string' && name.startsWith(LEGACY_TOOL_PREFIX)
+    ? `${NEUTRAL_TOOL_PREFIX}${name.slice(LEGACY_TOOL_PREFIX.length)}`
+    : name
+
+export const legacyAliasTools = list => list.flatMap(tool => {
+  const legacy = legacyToolName(tool.name)
+  if (!legacy) return []
+  return [{ ...tool, name: legacy,
+    description: `历史名称，等同 ${tool.name}；新接入请调用 ${tool.name}。`,
+    inputSchema: { type: 'object', additionalProperties: true } }]
+})

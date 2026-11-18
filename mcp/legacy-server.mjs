@@ -2,7 +2,7 @@
 
 import { createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { tools as commonTools, toolMethods as commonToolMethods } from './tools.mjs'
+import { tools as commonTools, toolMethods as commonToolMethods, legacyAliasTools, resolveToolName } from './tools.mjs'
 
 const SERVER_NAME = 'quickdesign-mastergo'
 const SERVER_VERSION = '0.1.5'
@@ -52,7 +52,7 @@ class QuickDesignConnection {
       plugin: this.info,
       actionRequired: this.socket && this.info
         ? null
-        : 'Open the target MasterGo document and run the QuickDesign plugin. It will connect automatically.',
+        : 'Open the target MasterGo or Figma document and run the QuickDesign plugin. It will connect automatically.',
     }
   }
 
@@ -144,7 +144,7 @@ class QuickDesignConnection {
 
   call(method, params = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
     if (!this.socket || !this.info) {
-      throw new BridgeError('NOT_CONNECTED', 'QuickDesign is not connected. Open the target MasterGo document and run QuickDesign.')
+      throw new BridgeError('NOT_CONNECTED', 'QuickDesign is not connected. Open the target MasterGo or Figma document and run QuickDesign.')
     }
     const id = cryptoRandomId()
     return new Promise((resolve, reject) => {
@@ -273,7 +273,7 @@ function httpHandler(request, response) {
     return
   }
   response.writeHead(404, { 'content-type': 'text/plain', ...cors })
-  response.end('QuickDesign MasterGo Bridge\n')
+  response.end('QuickDesign Bridge\n')
 }
 
 function makeBridgeServer(host) {
@@ -331,13 +331,13 @@ bindPrimary()
 // direct-WS MCP must advertise the same schemas so a capability added to
 // tools.mjs is instantly reachable over either transport. Drift here is what
 // caused mastergo_update_nodes's new patch fields to be missing from legacy.
-const tools = commonTools
+const tools = [...commonTools, ...legacyAliasTools(commonTools)]
 const toolMethods = commonToolMethods
 
 // Legacy transport bypasses broker's assertNodeOpRevision, so enforce the
 // unsigned-bypass rejection at the tool dispatch boundary as well.
 function sanitizeLegacyNodeOpParams(name, args) {
-  if (name !== 'mastergo_node_op' || !args || typeof args !== 'object') return args
+  if (name !== 'quickdesign_node_op' || !args || typeof args !== 'object') return args
   if (!Object.prototype.hasOwnProperty.call(args, 'allowUnsigned')) return args
   const { allowUnsigned: _drop, ...rest } = args
   return rest
@@ -365,9 +365,10 @@ async function readStatus(args) {
   return status
 }
 
-async function callTool(name, args) {
-  if (name === 'mastergo_status') return toolResult(await readStatus(args))
-  if (!(name in toolMethods)) return toolResult({ code: 'METHOD_NOT_FOUND', message: `Unknown tool: ${name}` }, true)
+async function callTool(rawName, args) {
+  const name = resolveToolName(rawName)
+  if (name === 'quickdesign_status') return toolResult(await readStatus(args))
+  if (!(name in toolMethods)) return toolResult({ code: 'METHOD_NOT_FOUND', message: `Unknown tool: ${rawName}` }, true)
   const safeArgs = sanitizeLegacyNodeOpParams(name, args || {})
   try {
     return toolResult(await connection.call(toolMethods[name], safeArgs))
@@ -390,7 +391,7 @@ async function handleMcp(message) {
         protocolVersion: message.params?.protocolVersion || '2025-06-18',
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: SERVER_NAME, version: SERVER_VERSION },
-        instructions: 'Use mastergo_status first: when connected it already returns the document, page, and current selection, so do not chain extra read calls to confirm the connection. Call mastergo_get_context again only after the selection or page changes. Only call mastergo_get_node_tree with an explicit nodeId when a bounded subtree is genuinely needed. QuickDesign must be running in the target MasterGo document.',
+        instructions: 'Use quickdesign_status first: when connected it already returns the document, page, and current selection, so do not chain extra read calls to confirm the connection. Call quickdesign_get_context again only after the selection or page changes. Only call quickdesign_get_node_tree with an explicit nodeId when a bounded subtree is genuinely needed. quickdesign_* is the canonical prefix; the older mastergo_* names are accepted aliases. QuickDesign must be running in the target design document.',
       },
     })
     return

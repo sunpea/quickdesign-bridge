@@ -8,7 +8,7 @@ import { execFileSync } from 'node:child_process'
 import { encodeWebSocketFrame, decodeWebSocketFrame } from './websocket.mjs'
 import { toolMethods } from './tools.mjs'
 
-export const VERSION = '0.2.0'
+export const VERSION = '0.3.0'
 const bundleFiles = ['server.mjs', 'broker.mjs', 'runtime.mjs', 'tools.mjs', 'websocket.mjs', 'legacy-server.mjs']
 export const BUILD_ID = `quickdesign-v2-${createHash('sha256').update(bundleFiles.map(file => readFileSync(new URL(file, import.meta.url))).reduce((a, b) => Buffer.concat([a, b]), Buffer.alloc(0))).digest('hex').slice(0, 16)}`
 export const PROTOCOL = 'quickdesign.bridge.v2'
@@ -58,7 +58,7 @@ export async function startBroker({ runtimeDir, basePort = 50679, portRange = 8,
   })
   const listDocs = () => [...documents.values()].filter(d => [...plugins.values()].some(p => p.documentId === d.id)).map(d => {
     const primary = [...plugins.values()].find(p => p.documentId === d.id)
-    return { documentId: d.id, pluginSessionId: primary.id, page: primary.page, pluginCount: [...plugins.values()].filter(p => p.documentId === d.id).length,
+    return { documentId: d.id, host: primary.host, pluginSessionId: primary.id, page: primary.page, pluginCount: [...plugins.values()].filter(p => p.documentId === d.id).length,
       blocked: d.blocked, queued: d.queue.length, operationId: d.active?.id || null }
   })
   const snapshot = () => ({ type: 'sessions', brokerId, buildId: BUILD_ID, version: VERSION, protocol: PROTOCOL, port,
@@ -66,17 +66,17 @@ export async function startBroker({ runtimeDir, basePort = 50679, portRange = 8,
   const broadcast = () => { for (const plugin of plugins.values()) send(plugin, snapshot()) }
   const bind = (agent, documentId) => {
     const primary = [...plugins.values()].find(p => p.documentId === documentId)
-    if (!primary) throw fail('NOT_CONNECTED', '目标 MasterGo 文档未连接。')
+    if (!primary) throw fail('NOT_CONNECTED', '目标文档未连接。')
     agent.binding = { documentId, pluginSessionId: primary.id }
     agent.paused = false
     broadcast()
     return agent.binding
   }
   const target = agent => {
-    if (agent.paused) throw fail('AGENT_PAUSED', '此智能体会话已在插件中解绑；请明确调用 mastergo_select_document 恢复。')
+    if (agent.paused) throw fail('AGENT_PAUSED', '此智能体会话已在插件中解绑；请明确调用 quickdesign_select_document 恢复。')
     if (!agent.binding) {
       const available = listDocs()
-      if (available.length !== 1) throw fail(available.length ? 'TARGET_REQUIRED' : 'NOT_CONNECTED', available.length ? '多个文档在线，请调用 mastergo_select_document 明确选择。' : '请在目标文档打开 QuickDesign 并完成首次配对。')
+      if (available.length !== 1) throw fail(available.length ? 'TARGET_REQUIRED' : 'NOT_CONNECTED', available.length ? '多个文档在线，请调用 quickdesign_select_document 明确选择。' : '请在目标文档打开 QuickDesign 并完成首次配对。')
       bind(agent, available[0].documentId)
     }
     const plugin = plugins.get(agent.binding.pluginSessionId)
@@ -141,7 +141,7 @@ export async function startBroker({ runtimeDir, basePort = 50679, portRange = 8,
     const action = params && params.action
     if (action === 'move' || action === 'reorder') {
       if (typeof params.expectedSignature !== 'string' || !params.expectedSignature) {
-        throw fail('REVISION_REQUIRED', `节点操作 ${action} 须提供 expectedSignature，请先用 mastergo_get_node_tree 读取当前签名。`)
+        throw fail('REVISION_REQUIRED', `节点操作 ${action} 须提供 expectedSignature，请先用 quickdesign_get_node_tree 读取当前签名。`)
       }
       return
     }
@@ -160,6 +160,7 @@ export async function startBroker({ runtimeDir, basePort = 50679, portRange = 8,
     const plugin = target(agent), d = doc(plugin.documentId)
     if (d.blocked) throw fail('OUTCOME_UNKNOWN', '此文档有结果未知的操作，请先核对并处理。', d.blocked)
     if (method === 'history.undo') throw fail('UNDO_CONFLICT', '共享模式不执行全局撤销，避免撤销其他智能体或人工操作。')
+    if (plugin.supportedMethods && !plugin.supportedMethods.includes(method)) throw fail('UNSUPPORTED_METHOD', `${plugin.host} 当前未适配此操作：${method}`, { host: plugin.host, supportedMethods: plugin.supportedMethods })
     if (method === 'nodes.updateText' && !params.expectedSignature) throw fail('REVISION_REQUIRED', '修改文本须提供 expectedSignature。')
     if (method === 'nodes.update' && params.updates?.some(update => !update.expectedSignature)) throw fail('REVISION_REQUIRED', '每项节点修改须提供 expectedSignature。')
     if (method === 'nodes.op') assertNodeOpRevision(params)
@@ -187,9 +188,9 @@ export async function startBroker({ runtimeDir, basePort = 50679, portRange = 8,
     return entry.promise
   }
   async function call(agent, name, args = {}, key = randomUUID()) {
-    if (name === 'mastergo_list_documents') return { documents: listDocs(), binding: agent.binding || null }
-    if (name === 'mastergo_select_document') return bind(agent, args.documentId)
-    if (name === 'mastergo_approve_connection') {
+    if (name === 'quickdesign_list_documents') return { documents: listDocs(), binding: agent.binding || null }
+    if (name === 'quickdesign_select_document') return bind(agent, args.documentId)
+    if (name === 'quickdesign_approve_connection') {
       const pending = pairings.get(args.pairingId)
       if (!pending || Date.now() - pending.createdAt > 120_000) throw fail('PAIRING_EXPIRED', '配对请求已失效，请在插件重新连接。')
       const token = randomBytes(32).toString('hex')
@@ -197,7 +198,7 @@ export async function startBroker({ runtimeDir, basePort = 50679, portRange = 8,
       registerPlugin(pending, token)
       return { documentId: pending.documentId, pluginSessionId: pending.id, paired: true }
     }
-    if (name === 'mastergo_resolve_operation') {
+    if (name === 'quickdesign_resolve_operation') {
       const plugin = target(agent), d = doc(plugin.documentId)
       if (d.blocked?.operationId !== args.operationId) throw fail('OPERATION_MISMATCH', '操作不属于当前文档的待确认记录。')
       if (d.active && plugins.has(d.active.pluginId)) throw fail('BUSY', '宿主仍可能执行中，必须先关闭该插件执行实例并核对结果。')
@@ -207,13 +208,13 @@ export async function startBroker({ runtimeDir, basePort = 50679, portRange = 8,
       d.blocked = null; delete recovery[d.id]; pump(d); broadcast()
       return { operationId: args.operationId, resolution: args.resolution, replayed: false }
     }
-    if (name === 'mastergo_status') {
+    if (name === 'quickdesign_status') {
       let plugin, actionRequired = null
       try { plugin = target(agent) } catch (error) { actionRequired = error.message }
       const status = { connected: Boolean(plugin), bridge: { host: '127.0.0.1', port, version: VERSION, protocol: PROTOCOL, brokerId, buildId: BUILD_ID },
         agent: agentSummary(agent), agents: [...agents.values()].map(agentSummary), documents: listDocs(),
-        plugin: plugin ? { documentId: plugin.documentId, page: plugin.page, pluginVersion: plugin.version, pluginSessionId: plugin.id, capabilities: plugin.capabilities.filter(c => c !== 'history.undo') } : null,
-        pendingConnections: [...pairings.values()].map(p => ({ pairingId: p.id, documentId: p.documentId, page: p.page })), actionRequired }
+        plugin: plugin ? { documentId: plugin.documentId, page: plugin.page, pluginVersion: plugin.version, pluginSessionId: plugin.id, host: plugin.host, supportedMethods: plugin.supportedMethods, capabilities: plugin.capabilities.filter(c => c !== 'history.undo') } : null,
+        pendingConnections: [...pairings.values()].map(p => ({ pairingId: p.id, documentId: p.documentId, host: p.host, page: p.page })), actionRequired }
       if (plugin && args.includeContext !== false) {
         try {
           status.context = await enqueue(agent, 'session.context', {}, key, contextTimeoutMs)
@@ -240,6 +241,8 @@ export async function startBroker({ runtimeDir, basePort = 50679, portRange = 8,
         send(plugin, { type: 'hello_error', code: 'PROTOCOL_MISMATCH', message: '请升级 QuickDesign 到共享 Bridge V2。' }); plugin.socket.end(); return
       }
       plugin.documentId = message.documentId; plugin.page = message.page || null; plugin.version = String(message.pluginVersion || 'unknown')
+      plugin.host = message.host === 'figma' ? 'figma' : 'mastergo'
+      plugin.supportedMethods = Array.isArray(message.supportedMethods) ? [...new Set(message.supportedMethods.filter(m => typeof m === 'string' && m.length <= 100))].slice(0, 100) : null
       plugin.capabilities = Array.isArray(message.capabilities) ? message.capabilities.filter(c => typeof c === 'string') : []
       if (typeof message.pairingToken === 'string' && authorized[hash(message.pairingToken)] === message.documentId) registerPlugin(plugin)
       else { plugin.createdAt = Date.now(); pairings.set(plugin.id, plugin); send(plugin, { type: 'pairing_required', pairingId: plugin.id, expiresIn: 120 }); }
